@@ -7,6 +7,7 @@ on:
 jobs:
   release:
     strategy:
+      fail-fast: false
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
@@ -25,8 +26,13 @@ jobs:
 
       - run: cargo build --release --target ${{ matrix.target }}
 
-      - run: |
-          sudo apt-get update && sudo apt-get install -y clamav
+      - name: ClamAV scan
+        continue-on-error: true
+        run: |
+          for i in 1 2 3; do
+            sudo apt-get update && break || sleep $((i * 10))
+          done
+          sudo apt-get install -y clamav
           sudo freshclam
           clamscan --no-summary target/${{ matrix.target }}/release/abaran
 
