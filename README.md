@@ -82,6 +82,22 @@ cd abaran
 cargo install --path .
 ```
 
+## Updates
+
+To upgrade to the latest release:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/pxlmrror/abaran/main/install.sh | bash
+```
+
+Or if built from source:
+
+```bash
+cd abaran
+git pull
+cargo install --path .
+```
+
 ## Usage
 
 ```bash
@@ -111,7 +127,7 @@ abaran ~/projects   # open a specific directory
 | `d` | Delete (trash via gio) |
 | `D` | Delete permanently |
 | `g` | Jump prefix (`gg` top, `ge` bottom) |
-| `z` | Scroll prefix (`zz` center, `zt` top, `zb` bottom) |
+| `za` | Toggle expand/collapse all directories |
 | `q` | Quit |
 | `?` | Toggle help |
 

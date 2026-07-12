@@ -18,12 +18,13 @@ juggling underneath.
 
 ## Project Structure (repo root)
 ```
-.abaran/
+abaran/
 ├── src/                    — Rust source (see below)
 ├── .github/workflows/
-│   ├── ci.yml              — build + test + clippy on push to main
+│   ├── ci.yml              — build + test + clippy + audit + deny on push to main
 │   ├── bump-version.yml     — manual dispatch: bump Cargo.toml, commit, tag, push
-│   └── release.yml         — build release binaries (x86_64, aarch64) on v* tag
+│   ├── release.yml         — build release binaries (x86_64, aarch64) on v* tag
+│   └── codeql.yml          — CodeQL security analysis on push to main and weekly
 ├── install.sh              — curl-able install script (auto-arch, ~/.local/bin)
 ├── AGENTS.md               — project instructions for AI coding agents
 ├── README.md               — user-facing README
@@ -36,7 +37,7 @@ src/
 ├── main.rs    — CLI entry, Tree ↔ Helix/gitui/scooter mode orchestration
 ├── app.rs     — State machine, event handling, input/confirm dialogs, help, clipboard
 ├── tree.rs    — File tree with lazy-loading, gitignore-aware rendering, Nerd Font icons
-├── helix.rs   — Helix-specific PTY session wrapper (toggle: Ctrl+O, double-Esc)
+├── helix.rs   — Helix-specific PTY session wrapper (toggle: Ctrl+O)
 ├── gitui.rs   — gitui-specific PTY session wrapper (toggle: Ctrl+G)
 ├── scooter.rs — scooter-specific PTY session wrapper (toggle: Ctrl+S)
 ├── session.rs — Generic PTY session: fork/exec, I/O forwarding, kitty filtering, suspend
@@ -90,7 +91,7 @@ User Keyboard
 
 ### 1. Alt+Enter toggle not working
 **Root cause:** Ghostty uses Kitty keyboard protocol, encoding Alt+Enter as `\x1b[13;3u` instead of raw `\x1b\x0d`.
-**Fix:** Switched to Ctrl+O (single byte `0x0f`) and double-Escape (`0x1b\x1b`) detection. Added `\x1b[<u` reset in `enable_forward()` and a `\x1b[>...u` filter in `handle_pty()`.
+**Fix:** Switched to Ctrl+O (single byte `0x0f`) and triple-Escape (`0x1b\x1b\x1b`) detection. Added `\x1b[<u` reset in `reset_term()` and a `\x1b[>...u` filter in `handle_pty()`.
 
 ### 2. Second file open blocked (PTY flow control deadlock)
 **Root cause:** When abaran is in tree mode, the PTY output buffer fills up with Helix's output. Helix blocks on write. When `open_file` tries to write `:open` to the PTY master, it also blocks because Helix can't read input.
@@ -102,7 +103,7 @@ User Keyboard
 
 ### 4. `:redraw` needed after opening second file
 **Root cause:** `leave_tree()` called `LeaveAlternateScreen`, putting the terminal on the main screen. Helix's output (designed for the alternate screen) rendered incorrectly.
-**Fix:** Replaced `leave_tree() + enable_forward()` with `enter_helix()` — stays on alternate screen, just clears it. Sends `:redraw\r` after `:open` to force full re-render. Resized PTY + SIGWINCH on entering Helix mode.
+**Fix:** Replaced `leave_tree() + reset_term()` with `enter_helix()` — stays on alternate screen, just clears it. Sends `:redraw\r` after `:open` to force full re-render. Resized PTY + SIGWINCH on entering Helix mode.
 
 ### 5. Helix `:q` freeze (LSP keeps PTY open)
 **Root cause:** When Helix exits, its LSP child processes keep the PTY slave open, so `read(master)` never returns 0. `forward_io` hangs forever.
@@ -120,7 +121,7 @@ User Keyboard
 
 ### Kitty Keyboard Protocol
 Ghostty wraps keystrokes as escape sequences (Ctrl+O → `\x1b[15;5u`).
-- **Reset:** send `\x1b[<u` to stdout in `enable_forward()` and `enter_tree()`
+- **Reset:** send `\x1b[<u` to stdout in `reset_term()` and `enter_tree()`
 - **Filter:** strip `\x1b[>...u` sequences from tool output in `handle_pty()`
 
 ### PTY Flow Control (Deadlock)

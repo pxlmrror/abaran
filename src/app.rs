@@ -403,7 +403,7 @@ impl App {
     }
 
     fn render_help(&self, frame: &mut Frame) {
-        let area = centered_rect(52, 28, frame.area());
+        let area = centered_rect(52, 30, frame.area());
         let block = Block::default()
             .borders(Borders::ALL)
             .title(" Keybindings ");
@@ -418,6 +418,7 @@ impl App {
                 ("l / →", "Expand directory"),
                 ("gg", "Jump to top"),
                 ("ge", "Jump to bottom"),
+                ("za", "Expand/collapse all"),
                 ("Enter", "Toggle dir / Open in Helix"),
             ]),
             ("File Operations", vec![
@@ -439,9 +440,10 @@ impl App {
                 ("Ctrl+O", "Toggle Helix"),
                 ("Ctrl+G", "Toggle gitui"),
                 ("Ctrl+S", "Toggle scooter"),
+                ("Ctrl+Z", "Suspend to background"),
                 ("Esc", "Clear search / selection"),
                 ("q", "Quit"),
-                ("?", "Toggle this help"),
+                ("?", "Toggle help (Esc/Enter dismiss)"),
             ]),
         ];
 
@@ -463,6 +465,12 @@ impl App {
                 ]));
             }
         }
+        lines.push(Line::from(
+            Span::styled(
+                "Updates: re-run install.sh",
+                Style::default().fg(Color::DarkGray),
+            ),
+        ));
 
         let inner = area.inner(Margin {
             horizontal: 2,
