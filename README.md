@@ -1,11 +1,8 @@
 > [!CAUTION]
-> **This project was written entirely by AI agents** (OpenCode + DeepSeek v4
-> Pro). Not a single line of code was hand-written by a human. I don't even
-> know the R of Rust — this project is a child of pain, born from trying to
-> learn the language while actually needing to use Helix. It is, by any
-> reasonable definition, AI slop. Use at your own risk. If your terminal
-> catches fire, your files vanish, or Helix starts speaking in tongues —
-> that's on you.
+> Built entirely by AI — OpenCode ([Go](https://github.com/anomalyco/opencode))
+> + DeepSeek v4 Pro, costing around $15 in API credits. My Rust knowledge
+> begins and ends at `cargo run`. Use at your own risk. If your terminal
+> catches fire, your files vanish, or Helix speaks in tongues — that's on you.
 
 ---
 
