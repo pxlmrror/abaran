@@ -24,7 +24,7 @@ drop into scooter for interactive find-and-replace. The PTY machinery that
 pipes I/O between tools runs invisibly underneath.
 
 > **This is a stopgap.** Once Helix ships a plugin system that handles
-> file-tree navigation, git integration, and project-wide search natively,
+> file manager, git UI, project wide search and replace plugins,
 > this project becomes obsolete. Until then, abaran is here to fill the gap.
 
 > **No pull requests.** I can't responsibly review PRs — this codebase is
@@ -47,13 +47,17 @@ pipes I/O between tools runs invisibly underneath.
   with zero-latency I/O forwarding
 - **No tmux required** — all tools share a single terminal window
 
-## Requirements
+## Prerequisites
 
-- **Linux** — uses nix for PTY management (Ghostty or kitty-based terminal
-  recommended)
-- [Helix](https://helix-editor.com) on your `$PATH`
-- [gitui](https://github.com/extrawurst/gitui) on your `$PATH`
-- [scooter](https://github.com/thomasschafer/scooter) on your `$PATH`
+| Dependency | Required | Why |
+|------------|----------|-----|
+| **Linux** | Yes | abaran only runs on Linux |
+| [Helix (`hx`)](https://helix-editor.com) | Yes | The editor abaran wraps |
+| [gitui](https://github.com/extrawurst/gitui) | Yes | Git operations |
+| [scooter](https://github.com/thomasschafer/scooter) | Yes | Find-and-replace |
+| [gio](https://wiki.gnome.org/Projects/GLib) | No | Trash support (falls back to `rm -rf`) |
+| Kitty-compatible terminal | Recommended | Ghostty, kitty, WezTerm, or Alacritty |
+| [Nerd Font](https://www.nerdfonts.com) | Recommended | File tree icons
 
 ## Installation
 
