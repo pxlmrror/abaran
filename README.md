@@ -53,8 +53,8 @@ pipes I/O between tools runs invisibly underneath.
 |------------|----------|-----|
 | **Linux** | Yes | abaran only runs on Linux |
 | [Helix (`hx`)](https://helix-editor.com) | Yes | The editor abaran wraps |
-| [gitui](https://github.com/extrawurst/gitui) | Yes | Git operations |
-| [scooter](https://github.com/thomasschafer/scooter) | Yes | Find-and-replace |
+| [gitui](https://github.com/extrawurst/gitui) | No | Git operations |
+| [scooter](https://github.com/thomasschafer/scooter) | No | Find-and-replace |
 | [gio](https://wiki.gnome.org/Projects/GLib) | No | Trash support (falls back to `rm -rf`) |
 | Kitty-compatible terminal | Recommended | Ghostty, kitty, WezTerm, or Alacritty |
 | [Nerd Font](https://www.nerdfonts.com) | Recommended | File tree icons
