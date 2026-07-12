@@ -61,19 +61,27 @@ pipes I/O between tools runs invisibly underneath.
 
 ## Installation
 
+### curl (recommended)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/pxlmrror/abaran/main/install.sh | bash
+```
+
+Installs the latest release binary to `~/.local/bin`. Supports x86_64 and
+aarch64 Linux.
+
+If `~/.local/bin` is not in your `PATH`, add this to your shell config:
+
+```bash
+export PATH="${HOME}/.local/bin:${PATH}"
+```
+
+### Build from source
+
 ```bash
 git clone https://github.com/pxlmrror/abaran.git
 cd abaran
 cargo install --path .
-```
-
-Or build the binary directly:
-
-```bash
-git clone https://github.com/pxlmrror/abaran.git
-cd abaran
-cargo build --release
-# binary at target/release/abaran
 ```
 
 ## Usage

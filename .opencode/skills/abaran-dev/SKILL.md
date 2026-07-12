@@ -16,7 +16,21 @@ juggling underneath.
 - Run: `cargo run`
 - Lint: `cargo clippy`
 
-## Project Structure
+## Project Structure (repo root)
+```
+.abaran/
+├── src/                    — Rust source (see below)
+├── .github/workflows/
+│   ├── ci.yml              — build + test + clippy on push to main
+│   ├── bump-version.yml     — manual dispatch: bump Cargo.toml, commit, tag, push
+│   └── release.yml         — build release binaries (x86_64, aarch64) on v* tag
+├── install.sh              — curl-able install script (auto-arch, ~/.local/bin)
+├── AGENTS.md               — project instructions for AI coding agents
+├── README.md               — user-facing README
+└── Cargo.toml
+```
+
+## Source Layout
 ```
 src/
 ├── main.rs    — CLI entry, Tree ↔ Helix/gitui/scooter mode orchestration
