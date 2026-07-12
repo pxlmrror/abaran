@@ -122,4 +122,4 @@ loop to prevent flow-control deadlocks.
 
 ## License
 
-MIT
+[MIT](LICENSE)
