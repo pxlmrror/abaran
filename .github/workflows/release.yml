@@ -25,6 +25,11 @@ jobs:
 
       - run: cargo build --release --target ${{ matrix.target }}
 
+      - run: |
+          sudo apt-get update && sudo apt-get install -y clamav
+          sudo freshclam
+          clamscan --no-summary target/${{ matrix.target }}/release/abaran
+
       - run: mv target/${{ matrix.target }}/release/abaran target/release/abaran-${{ matrix.target }}
 
       - uses: softprops/action-gh-release@v2

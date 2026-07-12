@@ -19,3 +19,11 @@ jobs:
       - run: cargo test
 
       - run: cargo clippy -- -D warnings
+
+      - run: cargo install cargo-audit
+
+      - run: cargo audit
+
+      - run: cargo install cargo-deny
+
+      - run: cargo deny check
