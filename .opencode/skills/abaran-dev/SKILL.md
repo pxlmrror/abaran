@@ -1,30 +1,40 @@
 ---
 name: abaran-dev
-description: Use when developing or debugging abaran, the Rust TUI file manager for Helix. Covers ratatui, PTY/terminal management, Helix integration, and common pitfalls.
+description: Use when developing or debugging abaran — the terminal cloak for Helix. Covers ratatui, PTY/terminal management, Helix/gitui/scooter integration, and common pitfalls.
 ---
 
 # abaran Development
+
+"আবরণ" (abaran) means "cloak" or "covering" in Bengali. The tool cloaks raw
+PTY machinery behind a seamless TUI, wrapping Helix/gitui/scooter
+transparently so the user navigates a file tree without seeing the terminal
+juggling underneath.
 
 ## Build Commands
 - Build: `cargo build`
 - Test: `cargo test`
 - Run: `cargo run`
+- Lint: `cargo clippy`
 
 ## Project Structure
 ```
 src/
-├── main.rs  — CLI entry, Tree↔Helix mode orchestration
-├── app.rs   — State machine, event handling, mode transitions
-├── tree.rs  — File tree with lazy-loading, ratatui rendering
-├── helix.rs — PTY management, I/O forwarding, toggle detection
-└── tui.rs   — Terminal mode transitions
+├── main.rs    — CLI entry, Tree ↔ Helix/gitui/scooter mode orchestration
+├── app.rs     — State machine, event handling, input/confirm dialogs, help, clipboard
+├── tree.rs    — File tree with lazy-loading, gitignore-aware rendering, Nerd Font icons
+├── helix.rs   — Helix-specific PTY session wrapper (toggle: Ctrl+O, double-Esc)
+├── gitui.rs   — gitui-specific PTY session wrapper (toggle: Ctrl+G)
+├── scooter.rs — scooter-specific PTY session wrapper (toggle: Ctrl+S)
+├── session.rs — Generic PTY session: fork/exec, I/O forwarding, kitty filtering, suspend
+├── tui.rs     — Terminal mode transitions, raw mode, alternate screen, stdin drain
+└── ops.rs     — File operations: delete (gio trash or rm -f), copy, rename, create
 ```
 
 ## Dependencies
-- **ratatui 0.30** + **crossterm 0.29** — TUI rendering
-- **nix 0.31** (features: term, ioctl, poll, process, signal, fs, uio) — PTY,
-  fork/exec, poll, signals
+- **ratatui 0.30** + **crossterm 0.29** — TUI rendering and terminal I/O
+- **nix 0.31** (features: term, ioctl, poll, process, signal, fs, uio) — PTY, fork/exec, poll, signals
 - **walkdir 2** — directory traversal
+- **ignore 0.4** — .gitignore pattern matching
 - **libc 0.2** — raw syscalls (dup2, ioctl TIOCSWINSZ, close)
 - **clap 4** + **anyhow 1** — CLI parsing and error handling
 
@@ -39,36 +49,65 @@ User Keyboard
 │   (stdin)       │               │  (alternate   │
 └───────┬────────┘               │   screen)    │
         │                        └──────────────┘
-        │ Helix Mode
+        │ Tool Mode (Helix / gitui / scooter)
         ▼
 ┌────────────────┐   forward_io()   ┌─────────────┐
 │  handle_stdin   │ ──────────────► │   PTY Master │
-│  (Ctrl+O/2xEsc) │                 │  ⇒ hx child  │
+│  (toggle keys)  │                 │  ⇒ $tool     │
 │  intercept     │ ◄────────────── │ (PTY Slave)  │
 │                │   handle_pty()  │              │
 └────────────────┘                 └─────────────┘
 ```
 
+1. abaran creates a PTY pair via `nix::pty::openpty`
+2. Forks; child execs the tool with PTY slave as stdio
+3. Parent stores PTY master fd, communicates bidirectionally
+4. **Tree mode**: ratatui renders file tree; Enter opens files via `:open` to PTY
+5. **Tool mode**: polls stdin + PTY master, forwards bytes bidirectionally
+6. **Toggle**: each tool has its own toggle keys registered in `PtySession::start`
+
+## Bug History
+
+### 1. Alt+Enter toggle not working
+**Root cause:** Ghostty uses Kitty keyboard protocol, encoding Alt+Enter as `\x1b[13;3u` instead of raw `\x1b\x0d`.
+**Fix:** Switched to Ctrl+O (single byte `0x0f`) and double-Escape (`0x1b\x1b`) detection. Added `\x1b[<u` reset in `enable_forward()` and a `\x1b[>...u` filter in `handle_pty()`.
+
+### 2. Second file open blocked (PTY flow control deadlock)
+**Root cause:** When abaran is in tree mode, the PTY output buffer fills up with Helix's output. Helix blocks on write. When `open_file` tries to write `:open` to the PTY master, it also blocks because Helix can't read input.
+**Fix:** Added `Session::drain()` — a non-blocking poll+read loop that empties the PTY output buffer. Called on every tree mode event loop iteration.
+
+### 3. Subfolder files not opening (is_dir mis-detection)
+**Root cause:** Modified `is_selected_dir` walk function had divergent traversal from `selected_path` (the `path` tracking vector changed the recursion behavior). Index-based walk found wrong entry.
+**Fix:** Simplified `is_selected_dir` to use `selected_path()` for the path, then do a path-based tree search. Eliminates the index-based walk entirely.
+
+### 4. `:redraw` needed after opening second file
+**Root cause:** `leave_tree()` called `LeaveAlternateScreen`, putting the terminal on the main screen. Helix's output (designed for the alternate screen) rendered incorrectly.
+**Fix:** Replaced `leave_tree() + enable_forward()` with `enter_helix()` — stays on alternate screen, just clears it. Sends `:redraw\r` after `:open` to force full re-render. Resized PTY + SIGWINCH on entering Helix mode.
+
+### 5. Helix `:q` freeze (LSP keeps PTY open)
+**Root cause:** When Helix exits, its LSP child processes keep the PTY slave open, so `read(master)` never returns 0. `forward_io` hangs forever.
+**Fix:** Added `child_alive()` PID check at top of `forward_io` loop. Detects Helix exit via `waitpid(WNOHANG)` regardless of PTY state.
+
 ## Common Issues and Fixes
 
 ### Kitty Keyboard Protocol
-Ghostty wraps keystrokes as escape sequences (Crtl+O → `\x1b[15;5u`).
+Ghostty wraps keystrokes as escape sequences (Ctrl+O → `\x1b[15;5u`).
 - **Reset:** send `\x1b[<u` to stdout in `enable_forward()` and `enter_tree()`
-- **Filter:** strip `\x1b[>...u` sequences from Helix output in `handle_pty()`
+- **Filter:** strip `\x1b[>...u` sequences from tool output in `handle_pty()`
 
 ### PTY Flow Control (Deadlock)
-When in tree mode, Helix keeps writing → PTY output buffer fills → Helix
+When in tree mode, the tool keeps writing → PTY output buffer fills → tool
 blocks on write → `open_file()` deadlocks.
 - **Fix:** always call `Session::drain()` (non-blocking poll+read) in tree mode
 
 ### Alternate Screen Corruption
-Helix renders on the alternate screen. If `LeaveAlternateScreen` is called
-during mode switch, Helix's output goes to the main screen and corrupts.
+Tools render on the alternate screen. If `LeaveAlternateScreen` is called
+during mode switch, tool output goes to the main screen and corrupts.
 - **Fix:** use `enter_helix()` and `back_to_tree()` which clear in-place on
   the alternate screen; never leave it during mode transitions
 
 ### Mouse Reporting
-Helix sends `\x1b[?1000h`, `\x1b[?1002h`, `\x1b[?1003h`, `\x1b[?1006h` which
+Tools may send `\x1b[?1000h`, `\x1b[?1002h`, `\x1b[?1003h`, `\x1b[?1006h` which
 enable mouse tracking on the real terminal.
 - **Filter:** `handle_pty()` strips `\x1b[?...h` sequences with mouse params
 - **Cleanup:** `reset_term()` sends disable sequences on mode transitions
@@ -80,7 +119,7 @@ extracting raw fds with `as_raw_fd()`:
 2. Create new `unsafe { OwnedFd::from_raw_fd(fd) }` wrappers
 
 ### Exit Detection
-Helix's LSP children keep PTY slave open after Helix exits → `read(master)`
-never returns 0.
+LSP children (or subprocesses) keep PTY slave open after the main process
+exits → `read(master)` never returns 0.
 - **Fix:** use PID-based `child_alive()` (calls `waitpid(WNOHANG)`) at the
   top of the `forward_io()` loop

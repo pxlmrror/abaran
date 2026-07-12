@@ -1,20 +1,20 @@
 use crate::session::{self, PtySession};
 use anyhow::Result;
 use std::ffi::CString;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-pub enum GituiAction {
+pub enum ScooterAction {
     ToggleTree,
     Exited,
 }
 
-impl From<session::ToolAction> for GituiAction {
+impl From<session::ToolAction> for ScooterAction {
     fn from(a: session::ToolAction) -> Self {
         match a {
             session::ToolAction::Toggle
             | session::ToolAction::LaunchLazygit
-            | session::ToolAction::LaunchScooter => GituiAction::ToggleTree,
-            session::ToolAction::Exited => GituiAction::Exited,
+            | session::ToolAction::LaunchScooter => ScooterAction::ToggleTree,
+            session::ToolAction::Exited => ScooterAction::Exited,
         }
     }
 }
@@ -25,13 +25,20 @@ pub struct Session {
 
 impl Session {
     pub fn start(dir: &Path) -> Result<Self> {
-        let cmd = CString::new("gitui").unwrap();
+        let cmd = CString::new("scooter").unwrap();
         let args: &[CString] = &[];
-        let inner = PtySession::start(&cmd, args, Some(dir), vec![0x07, 0x0f], vec![], vec![])?;
+        let inner = PtySession::start(
+            &cmd,
+            args,
+            Some(dir),
+            vec![0x13],
+            vec![],
+            vec![],
+        )?;
         Ok(Session { inner })
     }
 
-    pub fn forward_io(&mut self) -> Result<GituiAction> {
+    pub fn forward_io(&mut self) -> Result<ScooterAction> {
         self.inner.forward_io().map(Into::into)
     }
 
@@ -53,21 +60,5 @@ impl Session {
 
     pub fn child_alive(&self) -> bool {
         self.inner.child_alive()
-    }
-}
-
-pub fn find_git_root(cwd: &Path) -> Option<PathBuf> {
-    let mut current = if cwd.is_dir() {
-        cwd.to_path_buf()
-    } else {
-        cwd.parent()?.to_path_buf()
-    };
-
-    loop {
-        if current.join(".git").exists() {
-            return Some(current);
-        }
-        let parent = current.parent()?;
-        current = parent.to_path_buf();
     }
 }

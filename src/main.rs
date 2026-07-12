@@ -2,6 +2,7 @@ mod app;
 mod helix;
 mod gitui;
 mod ops;
+mod scooter;
 mod session;
 mod tree;
 mod tui;
@@ -10,6 +11,52 @@ use anyhow::Result;
 use clap::Parser;
 use std::io::{stdout, Write};
 use std::path::PathBuf;
+
+macro_rules! run_tool_from_helix {
+    ($app:expr, $run_fn:ident) => {{
+        write!(stdout(), "\x1b[2J\x1b[H")?;
+        stdout().flush()?;
+        loop {
+            match $app.$run_fn()? {
+                app::Action::Continue
+                | app::Action::GituiExited
+                | app::Action::ScooterExited => break,
+                app::Action::Quit => {
+                    $app.cleanup();
+                    tui::disable_forward()?;
+                    return Ok(());
+                }
+                _ => {}
+            }
+        }
+        if let Some(ref helix) = $app.helix {
+            helix.drain();
+            helix.redraw()?;
+        }
+    }};
+}
+
+macro_rules! run_tool_from_tree {
+    ($app:expr, $terminal:expr, $run_fn:ident) => {{
+        tui::enter_helix()?;
+        loop {
+            match $app.$run_fn()? {
+                app::Action::Continue
+                | app::Action::GituiExited
+                | app::Action::ScooterExited => {
+                    $terminal = tui::back_to_tree()?;
+                    break;
+                }
+                app::Action::Quit => {
+                    $app.cleanup();
+                    tui::disable_forward()?;
+                    return Ok(());
+                }
+                _ => {}
+            }
+        }
+    }};
+}
 
 #[derive(Parser)]
 #[command(name = "abaran")]
@@ -31,71 +78,41 @@ fn main() -> Result<()> {
                 app.cleanup();
                 break;
             }
-                app::Action::SwitchToHelix => {
-                    tui::enter_helix()?;
+            app::Action::SwitchToHelix => {
+                tui::enter_helix()?;
 
-                    loop {
-                        match app.run_helix_mode()? {
-                            app::Action::Continue => {
-                                terminal = tui::back_to_tree()?;
-                                break;
-                            }
-                            app::Action::HelixExited => {
-                                terminal = tui::back_to_tree()?;
-                                break;
-                            }
-                            app::Action::SwitchToGitui => {
-                                write!(stdout(), "\x1b[2J\x1b[H")?;
-                                stdout().flush()?;
-                                loop {
-                                    match app.run_gitui_mode()? {
-                                        app::Action::Continue
-                                        | app::Action::GituiExited => break,
-                                        app::Action::Quit => {
-                                            app.cleanup();
-                                            tui::disable_forward()?;
-                                            return Ok(());
-                                        }
-                                        _ => {}
-                                    }
-                                }
-                                if let Some(ref helix) = app.helix {
-                                    helix.drain();
-                                    helix.redraw()?;
-                                }
-                            }
-                            app::Action::Quit => {
-                                app.cleanup();
-                                tui::disable_forward()?;
-                                return Ok(());
-                            }
-                            _ => {}
+                loop {
+                    match app.run_helix_mode()? {
+                        app::Action::Continue => {
+                            terminal = tui::back_to_tree()?;
+                            break;
                         }
+                        app::Action::HelixExited => {
+                            terminal = tui::back_to_tree()?;
+                            break;
+                        }
+                        app::Action::SwitchToGitui => {
+                            run_tool_from_helix!(app, run_gitui_mode);
+                        }
+                        app::Action::SwitchToScooter => {
+                            run_tool_from_helix!(app, run_scooter_mode);
+                        }
+                        app::Action::Quit => {
+                            app.cleanup();
+                            tui::disable_forward()?;
+                            return Ok(());
+                        }
+                        _ => {}
                     }
                 }
-                app::Action::SwitchToGitui => {
-                    tui::enter_helix()?;
-
-                    loop {
-                        match app.run_gitui_mode()? {
-                            app::Action::Continue => {
-                                terminal = tui::back_to_tree()?;
-                                break;
-                            }
-                            app::Action::GituiExited => {
-                                terminal = tui::back_to_tree()?;
-                                break;
-                            }
-                            app::Action::Quit => {
-                                app.cleanup();
-                                tui::disable_forward()?;
-                                return Ok(());
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-                _ => {}
+            }
+            app::Action::SwitchToGitui => {
+                run_tool_from_tree!(app, terminal, run_gitui_mode);
+            }
+            app::Action::SwitchToScooter => {
+                run_tool_from_tree!(app, terminal, run_scooter_mode);
+            }
+            _ => {}
         }
     }
 

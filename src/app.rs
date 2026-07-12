@@ -1,4 +1,4 @@
-use crate::{gitui, helix, ops, tree, tui};
+use crate::{gitui, helix, ops, scooter, tree, tui};
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use nix::sys::signal::{raise, Signal};
@@ -17,6 +17,8 @@ pub enum Action {
     HelixExited,
     SwitchToGitui,
     GituiExited,
+    SwitchToScooter,
+    ScooterExited,
     Continue,
 }
 
@@ -33,6 +35,7 @@ pub struct App {
     pub tree: tree::FileTree,
     pub helix: Option<helix::Session>,
     pub gitui: Option<gitui::Session>,
+    pub scooter: Option<scooter::Session>,
     clipboard: Vec<PathBuf>,
     clip_mode: Option<tree::ClipMode>,
     status: Option<String>,
@@ -49,6 +52,7 @@ impl App {
             tree,
             helix: None,
             gitui: None,
+            scooter: None,
             clipboard: Vec::new(),
             clip_mode: None,
             status: None,
@@ -182,6 +186,25 @@ impl App {
             }
             Err(e) => {
                 self.status = Some(format!("Failed to start gitui: {}", e));
+                None
+            }
+        }
+    }
+
+    fn try_launch_scooter(&mut self) -> Option<Action> {
+        if let Some(session) = self.scooter.take() {
+            drop(session);
+        }
+        let dir = self.target_dir().unwrap_or_else(|| self.tree.root.path.clone());
+        self.status = Some(format!("Launching scooter in {}", dir.display()));
+        match scooter::Session::start(&dir) {
+            Ok(session) => {
+                self.scooter = Some(session);
+                self.status = None;
+                Some(Action::SwitchToScooter)
+            }
+            Err(e) => {
+                self.status = Some(format!("Failed to start scooter: {}", e));
                 None
             }
         }
@@ -415,6 +438,7 @@ impl App {
             ("General", vec![
                 ("Ctrl+O", "Toggle Helix"),
                 ("Ctrl+G", "Toggle gitui"),
+                ("Ctrl+S", "Toggle scooter"),
                 ("Esc", "Clear search / selection"),
                 ("q", "Quit"),
                 ("?", "Toggle this help"),
@@ -532,6 +556,14 @@ impl App {
                         self.status = None;
                         self.prefix = Some('g');
                     }
+                    KeyCode::Char('s')
+                        if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                    {
+                        self.status = None;
+                        if let Some(action) = self.try_launch_scooter() {
+                            return Ok(action);
+                        }
+                    }
                     KeyCode::Char('z')
                         if key.modifiers.contains(KeyModifiers::CONTROL) =>
                     {
@@ -542,12 +574,18 @@ impl App {
                         if let Some(ref session) = self.gitui {
                             session.stop_child();
                         }
+                        if let Some(ref session) = self.scooter {
+                            session.stop_child();
+                        }
                         tui::prepare_suspend()?;
                         raise(Signal::SIGTSTP)?;
                         if let Some(ref session) = self.helix {
                             session.cont_child();
                         }
                         if let Some(ref session) = self.gitui {
+                            session.cont_child();
+                        }
+                        if let Some(ref session) = self.scooter {
                             session.cont_child();
                         }
                         *terminal = tui::enter_tree()?;
@@ -578,7 +616,7 @@ impl App {
                                 match helix::Session::start(&path) {
                                     Ok(session) => self.helix = Some(session),
                                     Err(e) => {
-                                        self.status = Some(format!("{}", e));
+                                        self.status = Some(format!("Failed to start Helix: {}", e));
                                         continue;
                                     }
                                 }
@@ -737,6 +775,12 @@ impl App {
                     self.gitui = None;
                 }
             }
+            if let Some(ref session) = self.scooter {
+                session.drain();
+                if !session.child_alive() {
+                    self.scooter = None;
+                }
+            }
         }
     }
 
@@ -752,6 +796,10 @@ impl App {
             helix::HelixAction::LaunchLazygit => {
                 self.status = None;
                 Ok(self.try_launch_gitui().unwrap_or(Action::Continue))
+            }
+            helix::HelixAction::LaunchScooter => {
+                self.status = None;
+                Ok(self.try_launch_scooter().unwrap_or(Action::Continue))
             }
             helix::HelixAction::Exited => {
                 self.helix = None;
@@ -776,11 +824,30 @@ impl App {
         }
     }
 
+    pub fn run_scooter_mode(&mut self) -> Result<Action> {
+        let session = match self.scooter.as_mut() {
+            Some(s) => s,
+            None => return Ok(Action::Continue),
+        };
+
+        session.resize()?;
+        match session.forward_io()? {
+            scooter::ScooterAction::ToggleTree => Ok(Action::Continue),
+            scooter::ScooterAction::Exited => {
+                self.scooter = None;
+                Ok(Action::ScooterExited)
+            }
+        }
+    }
+
     pub fn cleanup(&mut self) {
         if let Some(session) = self.helix.take() {
             drop(session);
         }
         if let Some(session) = self.gitui.take() {
+            drop(session);
+        }
+        if let Some(session) = self.scooter.take() {
             drop(session);
         }
     }

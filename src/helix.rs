@@ -10,6 +10,7 @@ use std::path::Path;
 pub enum HelixAction {
     ToggleTree,
     LaunchLazygit,
+    LaunchScooter,
     Exited,
 }
 
@@ -18,6 +19,7 @@ impl From<session::ToolAction> for HelixAction {
         match a {
             session::ToolAction::Toggle => HelixAction::ToggleTree,
             session::ToolAction::LaunchLazygit => HelixAction::LaunchLazygit,
+            session::ToolAction::LaunchScooter => HelixAction::LaunchScooter,
             session::ToolAction::Exited => HelixAction::Exited,
         }
     }
@@ -33,7 +35,7 @@ impl Session {
         let file_cstr = CString::new(file.as_os_str().as_encoded_bytes())
             .expect("path contains null byte");
         let args = &[CString::new("hx").unwrap(), file_cstr];
-        let inner = PtySession::start(&cmd, args, None, vec![0x0f], vec![0x07])?;
+        let inner = PtySession::start(&cmd, args, None, vec![0x0f], vec![0x07], vec![0x13])?;
         Ok(Session { inner })
     }
 
