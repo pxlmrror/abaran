@@ -28,6 +28,7 @@ pub struct PtySession {
     launcher_bytes: Vec<u8>,
     scooter_launcher_bytes: Vec<u8>,
     stdin_pending: Vec<u8>,
+    screen: vt100::Parser,
 }
 
 impl PtySession {
@@ -115,6 +116,11 @@ impl PtySession {
 
         let master = unsafe { OwnedFd::from_raw_fd(master_fd) };
 
+        let (rows, cols) = terminal_size()
+            .map(|ws| (ws.ws_row, ws.ws_col))
+            .unwrap_or((24, 80));
+        let screen = vt100::Parser::new(rows, cols, 0);
+
         if let Ok(ws) = terminal_size() {
             set_pty_size(master.as_raw_fd(), ws.ws_row, ws.ws_col).ok();
         }
@@ -127,6 +133,7 @@ impl PtySession {
             launcher_bytes,
             scooter_launcher_bytes,
             stdin_pending: Vec::new(),
+            screen,
         })
     }
 
@@ -335,28 +342,94 @@ impl PtySession {
         }
 
         if !out.is_empty() {
+            self.screen.process(&out);
             write(unsafe { BorrowedFd::borrow_raw(1) }, &out).ok();
         }
         Ok(false)
     }
 
-    pub fn drain(&self) {
+    pub fn drain(&mut self) {
         loop {
             let mut fds = [PollFd::new(self.master.as_fd(), PollFlags::POLLIN)];
             if poll(&mut fds, 0u16).unwrap_or(0) == 0 {
                 break;
             }
             let mut buf = [0u8; 4096];
-            let _ = read(self.master.as_fd(), &mut buf);
+            if let Ok(n) = read(self.master.as_fd(), &mut buf)
+                && n > 0
+            {
+                self.screen.process(&buf[..n]);
+            }
         }
     }
 
-    pub fn resize(&self) -> Result<()> {
+    pub fn resize(&mut self) -> Result<()> {
         if let Ok(ws) = terminal_size() {
+            self.screen.set_size(ws.ws_row, ws.ws_col);
             set_pty_size(self.master.as_raw_fd(), ws.ws_row, ws.ws_col)
                 .context("failed to resize PTY")?;
             let _ = kill(self.child_pid, Signal::SIGWINCH);
         }
+        Ok(())
+    }
+
+    pub fn paint_screen(&self) -> Result<()> {
+        use vt100::Color;
+
+        let screen = self.screen.screen();
+        let (rows, cols) = screen.size();
+
+        let mut out: Vec<u8> = Vec::new();
+        out.extend_from_slice(b"\x1b[H\x1b[2J");
+
+        let mut curr_fg = Color::Default;
+        let mut curr_bg = Color::Default;
+        let mut curr_bold = false;
+        let mut curr_italic = false;
+        let mut curr_underline = false;
+        let mut curr_inverse = false;
+
+        for row in 0..rows {
+            let pos = format!("\x1b[{};1H", row + 1);
+            out.extend_from_slice(pos.as_bytes());
+
+            for col in 0..cols {
+                if let Some(cell) = screen.cell(row, col) {
+                    let contents = cell.contents();
+
+                    let fg = cell.fgcolor();
+                    let bg = cell.bgcolor();
+                    let bold = cell.bold();
+                    let italic = cell.italic();
+                    let underline = cell.underline();
+                    let inverse = cell.inverse();
+
+                    if fg != curr_fg || bg != curr_bg || bold != curr_bold
+                        || italic != curr_italic || underline != curr_underline
+                        || inverse != curr_inverse
+                    {
+                        write_sgr(&mut out, fg, bg, bold, italic, underline, inverse);
+                        curr_fg = fg;
+                        curr_bg = bg;
+                        curr_bold = bold;
+                        curr_italic = italic;
+                        curr_underline = underline;
+                        curr_inverse = inverse;
+                    }
+
+                    if contents.is_empty() {
+                        out.push(b' ');
+                    } else {
+                        out.extend_from_slice(contents.as_bytes());
+                    }
+                } else {
+                    out.push(b' ');
+                }
+            }
+        }
+
+        out.extend_from_slice(b"\x1b[?25l");
+        write(unsafe { BorrowedFd::borrow_raw(1) }, &out)?;
         Ok(())
     }
 
@@ -372,9 +445,10 @@ impl PtySession {
         self.stop_child();
         tui::prepare_suspend()?;
         raise(Signal::SIGTSTP)?;
-        tui::resume_helix()?;
+        tui::resume_tool()?;
         self.cont_child();
         self.resize()?;
+        self.paint_screen()?;
         Ok(())
     }
 
@@ -415,4 +489,44 @@ fn set_pty_size(fd: std::os::raw::c_int, rows: u16, cols: u16) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn write_sgr(
+    out: &mut Vec<u8>,
+    fg: vt100::Color,
+    bg: vt100::Color,
+    bold: bool,
+    italic: bool,
+    underline: bool,
+    inverse: bool,
+) {
+    use vt100::Color;
+    out.extend_from_slice(b"\x1b[0");
+    if bold { out.extend_from_slice(b";1"); }
+    if italic { out.extend_from_slice(b";3"); }
+    if underline { out.extend_from_slice(b";4"); }
+    if inverse { out.extend_from_slice(b";7"); }
+    match fg {
+        Color::Default => {}
+        Color::Idx(i) => {
+            let s = format!(";38;5;{}", i);
+            out.extend_from_slice(s.as_bytes());
+        }
+        Color::Rgb(r, g, b) => {
+            let s = format!(";38;2;{};{};{}", r, g, b);
+            out.extend_from_slice(s.as_bytes());
+        }
+    }
+    match bg {
+        Color::Default => {}
+        Color::Idx(i) => {
+            let s = format!(";48;5;{}", i);
+            out.extend_from_slice(s.as_bytes());
+        }
+        Color::Rgb(r, g, b) => {
+            let s = format!(";48;2;{};{};{}", r, g, b);
+            out.extend_from_slice(s.as_bytes());
+        }
+    }
+    out.push(b'm');
 }

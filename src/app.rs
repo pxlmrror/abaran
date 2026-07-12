@@ -172,8 +172,8 @@ impl App {
     }
 
     fn try_launch_gitui(&mut self) -> Option<Action> {
-        if let Some(session) = self.gitui.take() {
-            drop(session);
+        if self.gitui.is_some() {
+            return Some(Action::SwitchToGitui);
         }
         let git_root = gitui::find_git_root(&self.tree.root.path)
             .unwrap_or_else(|| self.tree.root.path.clone());
@@ -192,8 +192,8 @@ impl App {
     }
 
     fn try_launch_scooter(&mut self) -> Option<Action> {
-        if let Some(session) = self.scooter.take() {
-            drop(session);
+        if self.scooter.is_some() {
+            return Some(Action::SwitchToScooter);
         }
         let dir = self.target_dir().unwrap_or_else(|| self.tree.root.path.clone());
         self.status = Some(format!("Launching scooter in {}", dir.display()));
@@ -763,19 +763,19 @@ impl App {
                 }
             }
 
-            if let Some(ref session) = self.helix {
+            if let Some(ref mut session) = self.helix {
                 session.drain();
                 if !session.child_alive() {
                     self.helix = None;
                 }
             }
-            if let Some(ref session) = self.gitui {
+            if let Some(ref mut session) = self.gitui {
                 session.drain();
                 if !session.child_alive() {
                     self.gitui = None;
                 }
             }
-            if let Some(ref session) = self.scooter {
+            if let Some(ref mut session) = self.scooter {
                 session.drain();
                 if !session.child_alive() {
                     self.scooter = None;
@@ -815,6 +815,7 @@ impl App {
         };
 
         session.resize()?;
+        session.paint_screen()?;
         match session.forward_io()? {
             gitui::GituiAction::ToggleTree => Ok(Action::Continue),
             gitui::GituiAction::Exited => {
@@ -831,6 +832,7 @@ impl App {
         };
 
         session.resize()?;
+        session.paint_screen()?;
         match session.forward_io()? {
             scooter::ScooterAction::ToggleTree => Ok(Action::Continue),
             scooter::ScooterAction::Exited => {

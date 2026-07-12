@@ -29,7 +29,7 @@ macro_rules! run_tool_from_helix {
                 _ => {}
             }
         }
-        if let Some(ref helix) = $app.helix {
+        if let Some(ref mut helix) = $app.helix {
             helix.drain();
             helix.redraw()?;
         }

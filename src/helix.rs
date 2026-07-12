@@ -64,11 +64,11 @@ impl Session {
         self.inner.write_to_master(b":redraw\r")
     }
 
-    pub fn resize(&self) -> Result<()> {
+    pub fn resize(&mut self) -> Result<()> {
         self.inner.resize()
     }
 
-    pub fn drain(&self) {
+    pub fn drain(&mut self) {
         self.inner.drain();
     }
 

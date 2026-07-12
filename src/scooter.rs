@@ -42,11 +42,15 @@ impl Session {
         self.inner.forward_io().map(Into::into)
     }
 
-    pub fn resize(&self) -> Result<()> {
+    pub fn resize(&mut self) -> Result<()> {
         self.inner.resize()
     }
 
-    pub fn drain(&self) {
+    pub fn paint_screen(&self) -> Result<()> {
+        self.inner.paint_screen()
+    }
+
+    pub fn drain(&mut self) {
         self.inner.drain();
     }
 

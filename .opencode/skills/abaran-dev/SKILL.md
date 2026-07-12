@@ -36,6 +36,7 @@ src/
 - **walkdir 2** — directory traversal
 - **ignore 0.4** — .gitignore pattern matching
 - **libc 0.2** — raw syscalls (dup2, ioctl TIOCSWINSZ, close)
+- **vt100 0.15** — ANSI terminal parser, maintains per-tool cell-grid screen buffer
 - **clap 4** + **anyhow 1** — CLI parsing and error handling
 
 ## Data Flow
@@ -65,6 +66,11 @@ User Keyboard
 4. **Tree mode**: ratatui renders file tree; Enter opens files via `:open` to PTY
 5. **Tool mode**: polls stdin + PTY master, forwards bytes bidirectionally
 6. **Toggle**: each tool has its own toggle keys registered in `PtySession::start`
+7. **vt100 screen buffer**: `handle_pty()` and `drain()` feed PTY output into a
+   `vt100::Parser` which maintains a cell-grid representation of the tool's
+   display. `paint_screen()` iterates the cell grid and writes styled ANSI to
+   stdout — this is how tool displays persist across mode switches and
+   suspend/resume.
 
 ## Bug History
 
@@ -87,6 +93,14 @@ User Keyboard
 ### 5. Helix `:q` freeze (LSP keeps PTY open)
 **Root cause:** When Helix exits, its LSP child processes keep the PTY slave open, so `read(master)` never returns 0. `forward_io` hangs forever.
 **Fix:** Added `child_alive()` PID check at top of `forward_io` loop. Detects Helix exit via `waitpid(WNOHANG)` regardless of PTY state.
+
+### 6. gitui/scooter blank after Ctrl+Z fg
+**Root cause:** `EnterAlternateScreen` (`\x1b[?1049h`) clears the alt buffer on resume. The tool is SIGSTOP'd and resumed (SIGCONT), but doesn't redraw because no state changed — it's blocked on `read()` with SA_RESTART ignoring SIGWINCH. Sending input through the PTY also failed because the tool only emitted incremental ratatui diffs.
+**Fix:** Added `vt100::Parser` screen buffer. `handle_pty()` and `drain()` feed all tool output to the parser, maintaining an up-to-date cell grid. On resume, `paint_screen()` writes the full cell grid (with SGR styling) to stdout, restoring the tool's exact pre-suspend display. No restart needed.
+
+### 7. gitui/scooter session recreated on every toggle
+**Root cause:** `try_launch_gitui()` and `try_launch_scooter()` always dropped the existing session and started a new one, even when already running.
+**Fix:** Added early-return: if `self.gitui.is_some()`, return `Action::SwitchToGitui` directly. Combined with the screen buffer (bug 6 fix), toggle-back repaints the tool's display via `paint_screen()` without restarting.
 
 ## Common Issues and Fixes
 
@@ -123,3 +137,22 @@ LSP children (or subprocesses) keep PTY slave open after the main process
 exits → `read(master)` never returns 0.
 - **Fix:** use PID-based `child_alive()` (calls `waitpid(WNOHANG)`) at the
   top of the `forward_io()` loop
+
+### Screen Buffer (vt100)
+Each `PtySession` maintains a `vt100::Parser` that processes all PTY output
+(filtered to remove Kitty/mouse sequences). The parser's cell grid mirrors
+what the tool expects the terminal to look like.
+
+- **Feed:** `handle_pty()` feeds filtered output (same bytes sent to stdout).
+  `drain()` feeds raw PTY output (keeps buffer current when tool is backgrounded).
+- **Resize:** `resize()` calls `screen.set_size()` to keep parser dimensions
+  in sync with PTY.
+- **Paint:** `paint_screen()` iterates all cells with their fg/bg colors and
+  attributes, generates styled ANSI, and writes to stdout. Used on:
+  * Toggle-back from tree/Helix to gitui/scooter (after `EnterAlternateScreen` clears screen)
+  * Resume from Ctrl+Z (after `resume_tool()` clears screen)
+- **Refresh lifecycle:** `drain()` (tree mode) keeps buffer current → toggle
+  back → `resize()` syncs size → `paint_screen()` repaints → `forward_io()`
+  resumes normal forwarding with the tool seeing a correct terminal state.
+- **Important:** `drain()` must take `&mut self` to call `screen.process()`.
+  All callers use `ref mut session` destructuring.

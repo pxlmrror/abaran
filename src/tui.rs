@@ -88,13 +88,13 @@ pub fn prepare_suspend() -> Result<()> {
     Ok(())
 }
 
-pub fn resume_helix() -> Result<()> {
+pub fn resume_tool() -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = stdout();
     execute!(stdout, EnterAlternateScreen)?;
-    let _ = write!(stdout, "\x1b[2J\x1b[H");
     let _ = stdout.flush();
     reset_term();
+    drain_stdin();
     Ok(())
 }
 
