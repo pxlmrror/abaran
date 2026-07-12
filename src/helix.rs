@@ -1,16 +1,17 @@
+use crate::tui;
 use anyhow::{Context, Result};
 use nix::{
     poll::{poll, PollFd, PollFlags, PollTimeout},
     pty::openpty,
-    sys::{signal::kill, signal::Signal, wait::waitpid},
+    sys::{
+        signal::{kill, raise, Signal},
+        wait::waitpid,
+    },
     unistd::{execvp, fork, read, write, ForkResult, Pid},
 };
 use std::ffi::CString;
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
 use std::path::Path;
-
-/// Double-Escape (press Esc twice within 250ms) toggles back to the file tree.
-const ESCAPE_TIMEOUT: u16 = 250;
 
 pub enum HelixAction {
     ToggleTree,
@@ -134,17 +135,14 @@ impl Session {
                 )
             };
 
-            if stdin_ready {
-                match self.handle_stdin()? {
-                    Some(a) => return Ok(a),
-                    None => {}
-                }
+            if stdin_ready
+                && let Some(a) = self.handle_stdin()?
+            {
+                return Ok(a);
             }
 
-            if pty_ready {
-                if self.handle_pty()? {
-                    return Ok(HelixAction::Exited);
-                }
+            if pty_ready && self.handle_pty()? {
+                return Ok(HelixAction::Exited);
             }
         }
     }
@@ -159,32 +157,17 @@ impl Session {
 
         let data = &buf[..n];
 
-        // Ctrl+O always toggles (single byte, unambiguous)
         if data.contains(&0x0f) {
             return Ok(Some(HelixAction::ToggleTree));
         }
 
-        // Two Escapes together (single read) → toggle
-        if n >= 2 && data[0] == 0x1b && data[1] == 0x1b {
-            return Ok(Some(HelixAction::ToggleTree));
-        }
-
-        // Single Escape — wait briefly for a second Escape (double-Escape toggles)
-        if n == 1 && data[0] == 0x1b {
-            let stdin_fd = unsafe { BorrowedFd::borrow_raw(0) };
-            let mut fds = [PollFd::new(stdin_fd, PollFlags::POLLIN)];
-            if poll(&mut fds, PollTimeout::from(ESCAPE_TIMEOUT))? > 0 {
-                let mut next = [0u8; 1];
-                if read(stdin_fd, &mut next)? > 0 && next[0] == 0x1b {
-                    return Ok(Some(HelixAction::ToggleTree));
-                }
-                // First byte was Escape, second is something else: forward both
-                write(self.master.as_fd(), b"\x1b").ok();
-                write(self.master.as_fd(), &next).ok();
-            } else {
-                // Timeout: just a single Escape key
-                write(self.master.as_fd(), b"\x1b").ok();
+        if data.contains(&0x1a) {
+            if let Some(pos) = data.iter().position(|&b| b == 0x1a)
+                && pos > 0
+            {
+                write(self.master.as_fd(), &data[..pos])?;
             }
+            self.suspend_session()?;
             return Ok(None);
         }
 
@@ -280,11 +263,29 @@ impl Session {
         }
     }
 
+    pub fn stop_child(&self) {
+        let _ = kill(self.child_pid, Signal::SIGSTOP);
+    }
+
+    pub fn cont_child(&self) {
+        let _ = kill(self.child_pid, Signal::SIGCONT);
+    }
+
+    fn suspend_session(&mut self) -> Result<()> {
+        self.stop_child();
+        tui::prepare_suspend()?;
+        raise(Signal::SIGTSTP).context("raise SIGTSTP failed")?;
+        tui::resume_helix()?;
+        self.cont_child();
+        self.resize()?;
+        Ok(())
+    }
+
     pub fn child_alive(&self) -> bool {
-        match waitpid(self.child_pid, Some(nix::sys::wait::WaitPidFlag::WNOHANG)) {
-            Ok(nix::sys::wait::WaitStatus::StillAlive) => true,
-            _ => false,
-        }
+        matches!(
+            waitpid(self.child_pid, Some(nix::sys::wait::WaitPidFlag::WNOHANG)),
+            Ok(nix::sys::wait::WaitStatus::StillAlive)
+        )
     }
 }
 

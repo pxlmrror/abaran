@@ -1,5 +1,6 @@
 mod app;
 mod helix;
+mod ops;
 mod tree;
 mod tui;
 
@@ -16,7 +17,7 @@ struct Cli {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    let cwd = std::fs::canonicalize(&cli.path).unwrap_or_else(|_| cli.path);
+    let cwd = std::fs::canonicalize(&cli.path).unwrap_or(cli.path);
 
     let mut app = app::App::new(cwd)?;
 

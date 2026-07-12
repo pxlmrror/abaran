@@ -9,5 +9,6 @@ crossterm = "0.29"
 clap = { version = "4", features = ["derive"] }
 nix = { version = "0.31", features = ["term", "ioctl", "poll", "process", "signal", "fs", "uio"] }
 walkdir = "2"
+ignore = "0.4"
 anyhow = "1"
 libc = "0.2"

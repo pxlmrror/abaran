@@ -51,7 +51,23 @@ pub fn leave_tree() -> Result<()> {
     Ok(())
 }
 
-// Keep old functions for the cleanup path
+pub fn prepare_suspend() -> Result<()> {
+    execute!(stdout(), LeaveAlternateScreen)?;
+    reset_term();
+    disable_raw_mode()?;
+    Ok(())
+}
+
+pub fn resume_helix() -> Result<()> {
+    enable_raw_mode()?;
+    let mut stdout = stdout();
+    execute!(stdout, EnterAlternateScreen)?;
+    let _ = write!(stdout, "\x1b[2J\x1b[H");
+    let _ = stdout.flush();
+    reset_term();
+    Ok(())
+}
+
 pub fn disable_forward() -> Result<()> {
     reset_term();
     disable_raw_mode()?;
