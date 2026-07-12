@@ -1,4 +1,4 @@
-use crate::{helix, ops, tree, tui};
+use crate::{gitui, helix, ops, tree, tui};
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use nix::sys::signal::{raise, Signal};
@@ -15,6 +15,8 @@ pub enum Action {
     Quit,
     SwitchToHelix,
     HelixExited,
+    SwitchToGitui,
+    GituiExited,
     Continue,
 }
 
@@ -30,6 +32,7 @@ enum InputState {
 pub struct App {
     pub tree: tree::FileTree,
     pub helix: Option<helix::Session>,
+    pub gitui: Option<gitui::Session>,
     clipboard: Vec<PathBuf>,
     clip_mode: Option<tree::ClipMode>,
     status: Option<String>,
@@ -45,6 +48,7 @@ impl App {
         Ok(App {
             tree,
             helix: None,
+            gitui: None,
             clipboard: Vec::new(),
             clip_mode: None,
             status: None,
@@ -159,6 +163,26 @@ impl App {
                 Err(e) => {
                     self.status = Some(format!("Rename failed: {}", e));
                 }
+            }
+        }
+    }
+
+    fn try_launch_gitui(&mut self) -> Option<Action> {
+        if let Some(session) = self.gitui.take() {
+            drop(session);
+        }
+        let git_root = gitui::find_git_root(&self.tree.root.path)
+            .unwrap_or_else(|| self.tree.root.path.clone());
+        self.status = Some(format!("Launching gitui in {}", git_root.display()));
+        match gitui::Session::start(&git_root) {
+            Ok(session) => {
+                self.gitui = Some(session);
+                self.status = None;
+                Some(Action::SwitchToGitui)
+            }
+            Err(e) => {
+                self.status = Some(format!("Failed to start gitui: {}", e));
+                None
             }
         }
     }
@@ -389,7 +413,8 @@ impl App {
                 ("p", "Prev match"),
             ]),
             ("General", vec![
-                ("Ctrl+O", "Switch to Helix"),
+                ("Ctrl+O", "Toggle Helix"),
+                ("Ctrl+G", "Toggle gitui"),
                 ("Esc", "Clear search / selection"),
                 ("q", "Quit"),
                 ("?", "Toggle this help"),
@@ -495,6 +520,14 @@ impl App {
                     KeyCode::Char('?') => {
                         self.help_visible = !self.help_visible;
                     }
+                    KeyCode::Char('g')
+                        if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                    {
+                        self.status = None;
+                        if let Some(action) = self.try_launch_gitui() {
+                            return Ok(action);
+                        }
+                    }
                     KeyCode::Char('g') => {
                         self.status = None;
                         self.prefix = Some('g');
@@ -506,9 +539,15 @@ impl App {
                         if let Some(ref session) = self.helix {
                             session.stop_child();
                         }
+                        if let Some(ref session) = self.gitui {
+                            session.stop_child();
+                        }
                         tui::prepare_suspend()?;
                         raise(Signal::SIGTSTP)?;
                         if let Some(ref session) = self.helix {
+                            session.cont_child();
+                        }
+                        if let Some(ref session) = self.gitui {
                             session.cont_child();
                         }
                         *terminal = tui::enter_tree()?;
@@ -536,8 +575,13 @@ impl App {
                             if let Some(ref mut session) = self.helix {
                                 session.open_file(&path)?;
                             } else {
-                                let session = helix::Session::start(&path)?;
-                                self.helix = Some(session);
+                                match helix::Session::start(&path) {
+                                    Ok(session) => self.helix = Some(session),
+                                    Err(e) => {
+                                        self.status = Some(format!("{}", e));
+                                        continue;
+                                    }
+                                }
                             }
                             return Ok(Action::SwitchToHelix);
                         }
@@ -687,6 +731,12 @@ impl App {
                     self.helix = None;
                 }
             }
+            if let Some(ref session) = self.gitui {
+                session.drain();
+                if !session.child_alive() {
+                    self.gitui = None;
+                }
+            }
         }
     }
 
@@ -699,6 +749,10 @@ impl App {
         session.resize()?;
         match session.forward_io()? {
             helix::HelixAction::ToggleTree => Ok(Action::Continue),
+            helix::HelixAction::LaunchLazygit => {
+                self.status = None;
+                Ok(self.try_launch_gitui().unwrap_or(Action::Continue))
+            }
             helix::HelixAction::Exited => {
                 self.helix = None;
                 Ok(Action::HelixExited)
@@ -706,8 +760,27 @@ impl App {
         }
     }
 
+    pub fn run_gitui_mode(&mut self) -> Result<Action> {
+        let session = match self.gitui.as_mut() {
+            Some(s) => s,
+            None => return Ok(Action::Continue),
+        };
+
+        session.resize()?;
+        match session.forward_io()? {
+            gitui::GituiAction::ToggleTree => Ok(Action::Continue),
+            gitui::GituiAction::Exited => {
+                self.gitui = None;
+                Ok(Action::GituiExited)
+            }
+        }
+    }
+
     pub fn cleanup(&mut self) {
         if let Some(session) = self.helix.take() {
+            drop(session);
+        }
+        if let Some(session) = self.gitui.take() {
             drop(session);
         }
     }

@@ -3,15 +3,43 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use nix::{
+    poll::{poll, PollFd, PollFlags},
+    unistd::read,
+};
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io::{stdout, Stdout, Write};
+use std::os::fd::BorrowedFd;
 
 pub type Term = Terminal<CrosstermBackend<Stdout>>;
+
+fn drain_stdin() {
+    let mut fds = [PollFd::new(
+        unsafe { BorrowedFd::borrow_raw(0) },
+        PollFlags::POLLIN,
+    )];
+    if poll(&mut fds, 50u16).unwrap_or(0) > 0 {
+        let mut buf = [0u8; 256];
+        let _ = read(unsafe { BorrowedFd::borrow_raw(0) }, &mut buf);
+    }
+    loop {
+        let mut fds = [PollFd::new(
+            unsafe { BorrowedFd::borrow_raw(0) },
+            PollFlags::POLLIN,
+        )];
+        if poll(&mut fds, 0u16).unwrap_or(0) == 0 {
+            break;
+        }
+        let mut buf = [0u8; 256];
+        let _ = read(unsafe { BorrowedFd::borrow_raw(0) }, &mut buf);
+    }
+}
 
 pub fn enter_tree() -> Result<Term> {
     enable_raw_mode()?;
     let _ = write!(stdout(), "\x1b[<u");
     let _ = stdout().flush();
+    drain_stdin();
     let mut stdout = stdout();
     execute!(stdout, EnterAlternateScreen)?;
     Ok(Terminal::new(CrosstermBackend::new(stdout))?)
@@ -30,6 +58,7 @@ pub fn enter_helix() -> Result<()> {
     let _ = write!(stdout(), "\x1b[2J\x1b[H");
     enable_raw_mode()?;
     reset_term();
+    drain_stdin();
     Ok(())
 }
 
@@ -38,6 +67,7 @@ pub fn back_to_tree() -> Result<Term> {
     disable_raw_mode()?;
     enable_raw_mode()?;
     reset_term();
+    drain_stdin();
     let _ = write!(stdout(), "\x1b[2J\x1b[H");
     let mut stdout = stdout();
     execute!(stdout, EnterAlternateScreen)?;
