@@ -2,7 +2,7 @@
 
 ## Build & Test
 - Build: `cargo build`
-- Test: `cargo test` (4 unit tests for FileTree)
+- Test: `cargo test` (5 unit tests for FileTree)
 - Run: `cargo run`
 - Lint: `cargo clippy`
 
