@@ -1,0 +1,320 @@
+use anyhow::{Context, Result};
+use nix::{
+    poll::{poll, PollFd, PollFlags, PollTimeout},
+    pty::openpty,
+    sys::{signal::kill, signal::Signal, wait::waitpid},
+    unistd::{execvp, fork, read, write, ForkResult, Pid},
+};
+use std::ffi::CString;
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
+use std::path::Path;
+
+/// Double-Escape (press Esc twice within 250ms) toggles back to the file tree.
+const ESCAPE_TIMEOUT: u16 = 250;
+
+pub enum HelixAction {
+    ToggleTree,
+    Exited,
+}
+
+pub struct Session {
+    master: OwnedFd,
+    child_pid: Pid,
+    /// Bytes leftover from partial Kitty escape sequence detection.
+    pty_pending: Vec<u8>,
+}
+
+impl Session {
+    pub fn start(file: &Path) -> Result<Self> {
+        let result = openpty(None, None).context("failed to create PTY")?;
+        let master_fd = result.master.as_raw_fd();
+        let slave_fd = result.slave.as_raw_fd();
+
+        // Forget both PtyMaster and PtySlave so they don't close
+        // the fds when dropped — we manually manage ownership.
+        std::mem::forget(result.master);
+        std::mem::forget(result.slave);
+
+        match unsafe { fork() }.context("fork failed")? {
+            ForkResult::Child => {
+                unsafe { libc::close(master_fd); }
+                unsafe {
+                    libc::dup2(slave_fd, 0);
+                    libc::dup2(slave_fd, 1);
+                    libc::dup2(slave_fd, 2);
+                }
+                if slave_fd > 2 {
+                    unsafe { libc::close(slave_fd); }
+                }
+
+                let file_cstr =
+                    CString::new(file.as_os_str().as_encoded_bytes())
+                        .expect("path contains null byte");
+                let args = &[CString::new("hx").unwrap(), file_cstr];
+                execvp(&args[0], args).ok();
+                std::process::exit(1);
+            }
+            ForkResult::Parent { child } => {
+                unsafe { libc::close(slave_fd); }
+                let master = unsafe { OwnedFd::from_raw_fd(master_fd) };
+
+                if let Ok(ws) = terminal_size() {
+                    set_pty_size(master.as_raw_fd(), ws.ws_row, ws.ws_col).ok();
+                }
+
+                Ok(Session {
+                    master,
+                    child_pid: child,
+                    pty_pending: Vec::new(),
+                })
+            }
+        }
+    }
+
+    pub fn open_file(&self, path: &Path) -> Result<()> {
+        // Send Escapes to exit any mode
+        let _ = write(self.master.as_fd(), b"\x1b\x1b\x1b");
+
+        // Wait briefly and drain any output Helix produces in response
+        let mut drain_buf = [0u8; 4096];
+        let mut fds = [PollFd::new(self.master.as_fd(), PollFlags::POLLIN)];
+        if poll(&mut fds, PollTimeout::from(50u16)).unwrap_or(0) > 0 {
+            let _ = read(self.master.as_fd(), &mut drain_buf);
+        }
+
+        // Send :open then :redraw to ensure a full screen redraw
+        let cmd = format!(":open {}\r:redraw\r", path.display());
+        let data = cmd.as_bytes();
+        let mut offset = 0;
+        while offset < data.len() {
+            let n = write(self.master.as_fd(), &data[offset..])
+                .context("failed to write to PTY")?;
+            offset += n;
+        }
+        Ok(())
+    }
+
+    pub fn resize(&self) -> Result<()> {
+        if let Ok(ws) = terminal_size() {
+            set_pty_size(self.master.as_raw_fd(), ws.ws_row, ws.ws_col)
+                .context("failed to resize PTY")?;
+            // Force Helix to fully redraw by sending SIGWINCH
+            let _ = kill(self.child_pid, Signal::SIGWINCH);
+        }
+        Ok(())
+    }
+
+    pub fn forward_io(&mut self) -> Result<HelixAction> {
+        loop {
+            // If Helix exited, stop forwarding (LSP may keep PTY open)
+            if !self.child_alive() {
+                return Ok(HelixAction::Exited);
+            }
+
+            let (stdin_ready, pty_ready) = {
+                let stdin_fd = unsafe { BorrowedFd::borrow_raw(0) };
+                let mut fds = [
+                    PollFd::new(stdin_fd, PollFlags::POLLIN),
+                    PollFd::new(self.master.as_fd(), PollFlags::POLLIN),
+                ];
+
+                if poll(&mut fds, None::<u16>).context("poll failed")? == 0 {
+                    continue;
+                }
+
+                (
+                    fds[0]
+                        .revents()
+                        .unwrap_or(PollFlags::empty())
+                        .contains(PollFlags::POLLIN),
+                    fds[1]
+                        .revents()
+                        .unwrap_or(PollFlags::empty())
+                        .contains(PollFlags::POLLIN),
+                )
+            };
+
+            if stdin_ready {
+                match self.handle_stdin()? {
+                    Some(a) => return Ok(a),
+                    None => {}
+                }
+            }
+
+            if pty_ready {
+                if self.handle_pty()? {
+                    return Ok(HelixAction::Exited);
+                }
+            }
+        }
+    }
+
+    fn handle_stdin(&mut self) -> Result<Option<HelixAction>> {
+        let mut buf = [0u8; 4096];
+        let n = read(unsafe { BorrowedFd::borrow_raw(0) }, &mut buf)
+            .context("read from stdin failed")?;
+        if n == 0 {
+            return Ok(Some(HelixAction::Exited));
+        }
+
+        let data = &buf[..n];
+
+        // Ctrl+O always toggles (single byte, unambiguous)
+        if data.contains(&0x0f) {
+            return Ok(Some(HelixAction::ToggleTree));
+        }
+
+        // Two Escapes together (single read) → toggle
+        if n >= 2 && data[0] == 0x1b && data[1] == 0x1b {
+            return Ok(Some(HelixAction::ToggleTree));
+        }
+
+        // Single Escape — wait briefly for a second Escape (double-Escape toggles)
+        if n == 1 && data[0] == 0x1b {
+            let stdin_fd = unsafe { BorrowedFd::borrow_raw(0) };
+            let mut fds = [PollFd::new(stdin_fd, PollFlags::POLLIN)];
+            if poll(&mut fds, PollTimeout::from(ESCAPE_TIMEOUT))? > 0 {
+                let mut next = [0u8; 1];
+                if read(stdin_fd, &mut next)? > 0 && next[0] == 0x1b {
+                    return Ok(Some(HelixAction::ToggleTree));
+                }
+                // First byte was Escape, second is something else: forward both
+                write(self.master.as_fd(), b"\x1b").ok();
+                write(self.master.as_fd(), &next).ok();
+            } else {
+                // Timeout: just a single Escape key
+                write(self.master.as_fd(), b"\x1b").ok();
+            }
+            return Ok(None);
+        }
+
+        write(self.master.as_fd(), data)?;
+        Ok(None)
+    }
+
+    fn handle_pty(&mut self) -> Result<bool> {
+        let mut buf = [0u8; 4096];
+        let n = read(self.master.as_fd(), &mut buf)
+            .context("read from PTY failed")?;
+        if n == 0 {
+            return Ok(true);
+        }
+
+        let data = if self.pty_pending.is_empty() {
+            buf[..n].to_vec()
+        } else {
+            self.pty_pending.extend_from_slice(&buf[..n]);
+            std::mem::take(&mut self.pty_pending)
+        };
+
+        let mut out = Vec::with_capacity(data.len());
+        let mut i = 0;
+
+        while i < data.len() {
+            if data[i] != 0x1b || i + 2 >= data.len() || data[i + 1] != b'[' {
+                out.push(data[i]);
+                i += 1;
+                continue;
+            }
+
+            let intermediary = data[i + 2];
+            let seq_start = i;
+
+            // Only handle CSI sequences with intermediary bytes > or ?
+            if intermediary != b'>' && intermediary != b'?' {
+                out.push(data[i]);
+                i += 1;
+                continue;
+            }
+
+            i += 3; // skip CSI
+            // Scan for final byte (0x40-0x7e)
+            let mut valid = true;
+            while i < data.len() && !(data[i] >= 0x40 && data[i] <= 0x7e) {
+                if data[i] != b';' && !data[i].is_ascii_digit() {
+                    valid = false;
+                }
+                i += 1;
+            }
+            if i >= data.len() {
+                // Reached end of buffer mid-sequence — save for next read
+                self.pty_pending = data[seq_start..].to_vec();
+                break;
+            }
+
+            let final_byte = data[i];
+            i += 1;
+
+            // Check if this sequence should be dropped
+            let drop = match (intermediary, valid, final_byte) {
+                (b'>', true, b'u') => true,              // Kitty keyboard enable
+                (b'?', true, b'h') => {                   // DEC private mode SET
+                    // Drop mouse-related modes
+                    let params = &data[seq_start + 3..i - 1];
+                    let s = std::str::from_utf8(params).unwrap_or("");
+                    s.split(';').any(|p| matches!(p, "1000" | "1002" | "1003" | "1006"))
+                }
+                _ => false,
+            };
+
+            if !drop {
+                out.extend_from_slice(&data[seq_start..i]);
+            }
+        }
+
+        if !out.is_empty() {
+            write(unsafe { BorrowedFd::borrow_raw(1) }, &out).ok();
+        }
+        Ok(false)
+    }
+
+    /// Drain buffered PTY output so Helix doesn't block on write.
+    pub fn drain(&self) {
+        loop {
+            let mut fds = [PollFd::new(self.master.as_fd(), PollFlags::POLLIN)];
+            if poll(&mut fds, 0u16).unwrap_or(0) == 0 {
+                break;
+            }
+            let mut buf = [0u8; 4096];
+            let _ = read(self.master.as_fd(), &mut buf);
+        }
+    }
+
+    pub fn child_alive(&self) -> bool {
+        match waitpid(self.child_pid, Some(nix::sys::wait::WaitPidFlag::WNOHANG)) {
+            Ok(nix::sys::wait::WaitStatus::StillAlive) => true,
+            _ => false,
+        }
+    }
+}
+
+impl Drop for Session {
+    fn drop(&mut self) {
+        let _ = kill(self.child_pid, Signal::SIGTERM);
+    }
+}
+
+fn terminal_size() -> Result<libc::winsize> {
+    unsafe {
+        let mut ws: libc::winsize = std::mem::zeroed();
+        if libc::ioctl(0, libc::TIOCGWINSZ, &mut ws) != 0 {
+            anyhow::bail!("ioctl TIOCGWINSZ failed");
+        }
+        Ok(ws)
+    }
+}
+
+fn set_pty_size(fd: std::os::raw::c_int, rows: u16, cols: u16) -> Result<()> {
+    unsafe {
+        let ws = libc::winsize {
+            ws_row: rows,
+            ws_col: cols,
+            ws_xpixel: 0,
+            ws_ypixel: 0,
+        };
+        if libc::ioctl(fd, libc::TIOCSWINSZ, &ws) != 0 {
+            anyhow::bail!("ioctl TIOCSWINSZ failed");
+        }
+    }
+    Ok(())
+}
