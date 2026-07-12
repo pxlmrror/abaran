@@ -1,7 +1,8 @@
 > [!CAUTION]
 > Built entirely by AI — OpenCode ([Go](https://github.com/anomalyco/opencode))
-> + DeepSeek v4 Pro, costing around $15 in API credits. My Rust knowledge
-> begins and ends at `cargo run`. Use at your own risk. If your terminal
+> + DeepSeek v4 Pro, costing around $15 in API credits. Born from a rabbit hole:
+> I set out to use Helix, hit its missing pieces, and AI-shoved my way into a
+> PTY manager in a language I don't know. Use at your own risk. If your terminal
 > catches fire, your files vanish, or Helix speaks in tongues — that's on you.
 
 ---
