@@ -13,7 +13,7 @@ impl From<session::ToolAction> for GituiAction {
         match a {
             session::ToolAction::Toggle
             | session::ToolAction::LaunchLazygit
-            | session::ToolAction::LaunchScooter => GituiAction::ToggleTree,
+            | session::ToolAction::LaunchSerpl => GituiAction::ToggleTree,
             session::ToolAction::Exited => GituiAction::Exited,
         }
     }

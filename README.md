@@ -20,7 +20,7 @@ https://www.youtube.com/watch?v=-1iJ05Y5YRg
 The name comes from the Bengali word **আবরণ** — a _shroud_ or _covering_.
 abaran cloaks Helix behind a seamless TUI layer: you browse your project in
 the tree, open files directly into Helix, toggle into gitui for git ops, or
-drop into scooter for interactive find-and-replace. The PTY machinery that
+drop into serpl for interactive find-and-replace. The PTY machinery that
 pipes I/O between tools runs invisibly underneath.
 
 > **This is a stopgap.** Once Helix ships a plugin system that handles
@@ -40,8 +40,8 @@ pipes I/O between tools runs invisibly underneath.
 - **File operations** — create, rename, delete (trash or rm -f), copy/paste
 - **gitui** — toggle into [gitui](https://github.com/extrawurst/gitui) for
   staging, commits, and branch management (Ctrl+G)
-- **scooter** — toggle into
-  [scooter](https://github.com/thomasschafer/scooter) for interactive
+- **serpl** — toggle into
+  [serpl](https://github.com/yassinebridi/serpl) for interactive
   project-wide find-and-replace (Ctrl+S)
 - **Seamless Helix integration** — files open in Helix running inside a PTY
   with zero-latency I/O forwarding
@@ -54,7 +54,7 @@ pipes I/O between tools runs invisibly underneath.
 | **Linux** | Yes | abaran only runs on Linux |
 | [Helix (`hx`)](https://helix-editor.com) | Yes | The editor abaran wraps |
 | [gitui](https://github.com/extrawurst/gitui) | No | Git operations |
-| [scooter](https://github.com/thomasschafer/scooter) | No | Find-and-replace |
+| [serpl](https://github.com/yassinebridi/serpl) | No | Find-and-replace |
 | [gio](https://wiki.gnome.org/Projects/GLib) | No | Trash support (falls back to `rm -rf`) |
 | Kitty-compatible terminal | Recommended | Ghostty, kitty, WezTerm, or Alacritty |
 | [Nerd Font](https://www.nerdfonts.com) | Recommended | File tree icons
@@ -116,7 +116,7 @@ abaran ~/projects   # open a specific directory
 | `Enter` | Toggle directory / open file in Helix |
 | `Ctrl+O` | Toggle between tree and Helix |
 | `Ctrl+G` | Toggle gitui |
-| `Ctrl+S` | Toggle scooter |
+| `Ctrl+S` | Toggle serpl |
 | `Ctrl+Z` | Suspend to background (fg to resume) |
 | `/` | Search (with `n`/`p` for next/prev) |
 | `Esc` | Clear search / clear selection |

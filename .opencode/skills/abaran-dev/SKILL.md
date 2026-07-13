@@ -1,12 +1,12 @@
 ---
 name: abaran-dev
-description: Use when developing or debugging abaran — the terminal cloak for Helix. Covers ratatui, PTY/terminal management, Helix/gitui/scooter integration, and common pitfalls.
+description: Use when developing or debugging abaran — the terminal cloak for Helix. Covers ratatui, PTY/terminal management, Helix/gitui/serpl integration, and common pitfalls.
 ---
 
 # abaran Development
 
 "আবরণ" (abaran) means "cloak" or "covering" in Bengali. The tool cloaks raw
-PTY machinery behind a seamless TUI, wrapping Helix/gitui/scooter
+PTY machinery behind a seamless TUI, wrapping Helix/gitui/serpl
 transparently so the user navigates a file tree without seeing the terminal
 juggling underneath.
 
@@ -34,12 +34,12 @@ abaran/
 ## Source Layout
 ```
 src/
-├── main.rs    — CLI entry, Tree ↔ Helix/gitui/scooter mode orchestration
+├── main.rs    — CLI entry, Tree ↔ Helix/gitui/serpl mode orchestration
 ├── app.rs     — State machine, event handling, input/confirm dialogs, help, clipboard
 ├── tree.rs    — File tree with lazy-loading, gitignore-aware rendering, Nerd Font icons
 ├── helix.rs   — Helix-specific PTY session wrapper (toggle: Ctrl+O)
 ├── gitui.rs   — gitui-specific PTY session wrapper (toggle: Ctrl+G)
-├── scooter.rs — scooter-specific PTY session wrapper (toggle: Ctrl+S)
+├── serpl.rs   — serpl-specific PTY session wrapper (toggle: Ctrl+S)
 ├── session.rs — Generic PTY session: fork/exec, I/O forwarding, kitty filtering, suspend
 ├── tui.rs     — Terminal mode transitions, raw mode, alternate screen, stdin drain
 └── ops.rs     — File operations: delete (gio trash or rm -f), copy, rename, create
@@ -65,7 +65,7 @@ User Keyboard
 │   (stdin)       │               │  (alternate   │
 └───────┬────────┘               │   screen)    │
         │                        └──────────────┘
-        │ Tool Mode (Helix / gitui / scooter)
+        │ Tool Mode (Helix / gitui / serpl)
         ▼
 ┌────────────────┐   forward_io()   ┌─────────────┐
 │  handle_stdin   │ ──────────────► │   PTY Master │
@@ -109,12 +109,12 @@ User Keyboard
 **Root cause:** When Helix exits, its LSP child processes keep the PTY slave open, so `read(master)` never returns 0. `forward_io` hangs forever.
 **Fix:** Added `child_alive()` PID check at top of `forward_io` loop. Detects Helix exit via `waitpid(WNOHANG)` regardless of PTY state.
 
-### 6. gitui/scooter blank after Ctrl+Z fg
+### 6. gitui/serpl blank after Ctrl+Z fg
 **Root cause:** `EnterAlternateScreen` (`\x1b[?1049h`) clears the alt buffer on resume. The tool is SIGSTOP'd and resumed (SIGCONT), but doesn't redraw because no state changed — it's blocked on `read()` with SA_RESTART ignoring SIGWINCH. Sending input through the PTY also failed because the tool only emitted incremental ratatui diffs.
 **Fix:** Added `vt100::Parser` screen buffer. `handle_pty()` and `drain()` feed all tool output to the parser, maintaining an up-to-date cell grid. On resume, `paint_screen()` writes the full cell grid (with SGR styling) to stdout, restoring the tool's exact pre-suspend display. No restart needed.
 
-### 7. gitui/scooter session recreated on every toggle
-**Root cause:** `try_launch_gitui()` and `try_launch_scooter()` always dropped the existing session and started a new one, even when already running.
+### 7. gitui/serpl session recreated on every toggle
+**Root cause:** `try_launch_gitui()` and `try_launch_serpl()` always dropped the existing session and started a new one, even when already running.
 **Fix:** Added early-return: if `self.gitui.is_some()`, return `Action::SwitchToGitui` directly. Combined with the screen buffer (bug 6 fix), toggle-back repaints the tool's display via `paint_screen()` without restarting.
 
 ## Common Issues and Fixes
@@ -164,7 +164,7 @@ what the tool expects the terminal to look like.
   in sync with PTY.
 - **Paint:** `paint_screen()` iterates all cells with their fg/bg colors and
   attributes, generates styled ANSI, and writes to stdout. Used on:
-  * Toggle-back from tree/Helix to gitui/scooter (after `EnterAlternateScreen` clears screen)
+  * Toggle-back from tree/Helix to gitui/serpl (after `EnterAlternateScreen` clears screen)
   * Resume from Ctrl+Z (after `resume_tool()` clears screen)
 - **Refresh lifecycle:** `drain()` (tree mode) keeps buffer current → toggle
   back → `resize()` syncs size → `paint_screen()` repaints → `forward_io()`

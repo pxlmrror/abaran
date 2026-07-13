@@ -16,7 +16,7 @@ use std::path::Path;
 pub enum ToolAction {
     Toggle,
     LaunchLazygit,
-    LaunchScooter,
+    LaunchSerpl,
     Exited,
 }
 
@@ -26,7 +26,7 @@ pub struct PtySession {
     pty_pending: Vec<u8>,
     toggle_bytes: Vec<u8>,
     launcher_bytes: Vec<u8>,
-    scooter_launcher_bytes: Vec<u8>,
+    serpl_launcher_bytes: Vec<u8>,
     stdin_pending: Vec<u8>,
     screen: vt100::Parser,
 }
@@ -38,7 +38,7 @@ impl PtySession {
         cwd: Option<&Path>,
         toggle_bytes: Vec<u8>,
         launcher_bytes: Vec<u8>,
-        scooter_launcher_bytes: Vec<u8>,
+        serpl_launcher_bytes: Vec<u8>,
     ) -> Result<Self> {
         let result = openpty(None, None).context("failed to create PTY")?;
         let master_fd = result.master.as_raw_fd();
@@ -131,7 +131,7 @@ impl PtySession {
             pty_pending: Vec::new(),
             toggle_bytes,
             launcher_bytes,
-            scooter_launcher_bytes,
+            serpl_launcher_bytes,
             stdin_pending: Vec::new(),
             screen,
         })
@@ -243,11 +243,11 @@ impl PtySession {
         }
 
         if self
-            .scooter_launcher_bytes
+            .serpl_launcher_bytes
             .iter()
             .any(|&b| filtered.contains(&b))
         {
-            return Ok(Some(ToolAction::LaunchScooter));
+            return Ok(Some(ToolAction::LaunchSerpl));
         }
 
         if self

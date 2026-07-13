@@ -1,4 +1,4 @@
-use crate::{gitui, helix, ops, scooter, tree, tui};
+use crate::{gitui, helix, ops, serpl, tree, tui};
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use nix::sys::signal::{raise, Signal};
@@ -17,8 +17,8 @@ pub enum Action {
     HelixExited,
     SwitchToGitui,
     GituiExited,
-    SwitchToScooter,
-    ScooterExited,
+    SwitchToSerpl,
+    SerplExited,
     Continue,
 }
 
@@ -35,7 +35,7 @@ pub struct App {
     pub tree: tree::FileTree,
     pub helix: Option<helix::Session>,
     pub gitui: Option<gitui::Session>,
-    pub scooter: Option<scooter::Session>,
+    pub serpl: Option<serpl::Session>,
     clipboard: Vec<PathBuf>,
     clip_mode: Option<tree::ClipMode>,
     status: Option<String>,
@@ -52,7 +52,7 @@ impl App {
             tree,
             helix: None,
             gitui: None,
-            scooter: None,
+            serpl: None,
             clipboard: Vec::new(),
             clip_mode: None,
             status: None,
@@ -191,20 +191,20 @@ impl App {
         }
     }
 
-    fn try_launch_scooter(&mut self) -> Option<Action> {
-        if self.scooter.is_some() {
-            return Some(Action::SwitchToScooter);
+    fn try_launch_serpl(&mut self) -> Option<Action> {
+        if self.serpl.is_some() {
+            return Some(Action::SwitchToSerpl);
         }
         let dir = self.target_dir().unwrap_or_else(|| self.tree.root.path.clone());
-        self.status = Some(format!("Launching scooter in {}", dir.display()));
-        match scooter::Session::start(&dir) {
+        self.status = Some(format!("Launching serpl in {}", dir.display()));
+        match serpl::Session::start(&dir) {
             Ok(session) => {
-                self.scooter = Some(session);
+                self.serpl = Some(session);
                 self.status = None;
-                Some(Action::SwitchToScooter)
+                Some(Action::SwitchToSerpl)
             }
             Err(e) => {
-                self.status = Some(format!("Failed to start scooter: {}", e));
+                self.status = Some(format!("Failed to start serpl: {}", e));
                 None
             }
         }
@@ -439,7 +439,7 @@ impl App {
             ("General", vec![
                 ("Ctrl+O", "Toggle Helix"),
                 ("Ctrl+G", "Toggle gitui"),
-                ("Ctrl+S", "Toggle scooter"),
+                ("Ctrl+S", "Toggle serpl"),
                 ("Ctrl+Z", "Suspend to background"),
                 ("Esc", "Clear search / selection"),
                 ("q", "Quit"),
@@ -568,7 +568,7 @@ impl App {
                         if key.modifiers.contains(KeyModifiers::CONTROL) =>
                     {
                         self.status = None;
-                        if let Some(action) = self.try_launch_scooter() {
+                        if let Some(action) = self.try_launch_serpl() {
                             return Ok(action);
                         }
                     }
@@ -582,7 +582,7 @@ impl App {
                         if let Some(ref session) = self.gitui {
                             session.stop_child();
                         }
-                        if let Some(ref session) = self.scooter {
+                        if let Some(ref session) = self.serpl {
                             session.stop_child();
                         }
                         tui::prepare_suspend()?;
@@ -593,7 +593,7 @@ impl App {
                         if let Some(ref session) = self.gitui {
                             session.cont_child();
                         }
-                        if let Some(ref session) = self.scooter {
+                        if let Some(ref session) = self.serpl {
                             session.cont_child();
                         }
                         *terminal = tui::enter_tree()?;
@@ -783,10 +783,10 @@ impl App {
                     self.gitui = None;
                 }
             }
-            if let Some(ref mut session) = self.scooter {
+            if let Some(ref mut session) = self.serpl {
                 session.drain();
                 if !session.child_alive() {
-                    self.scooter = None;
+                    self.serpl = None;
                 }
             }
         }
@@ -805,9 +805,9 @@ impl App {
                 self.status = None;
                 Ok(self.try_launch_gitui().unwrap_or(Action::Continue))
             }
-            helix::HelixAction::LaunchScooter => {
+            helix::HelixAction::LaunchSerpl => {
                 self.status = None;
-                Ok(self.try_launch_scooter().unwrap_or(Action::Continue))
+                Ok(self.try_launch_serpl().unwrap_or(Action::Continue))
             }
             helix::HelixAction::Exited => {
                 self.helix = None;
@@ -833,8 +833,8 @@ impl App {
         }
     }
 
-    pub fn run_scooter_mode(&mut self) -> Result<Action> {
-        let session = match self.scooter.as_mut() {
+    pub fn run_serpl_mode(&mut self) -> Result<Action> {
+        let session = match self.serpl.as_mut() {
             Some(s) => s,
             None => return Ok(Action::Continue),
         };
@@ -842,10 +842,10 @@ impl App {
         session.resize()?;
         session.paint_screen()?;
         match session.forward_io()? {
-            scooter::ScooterAction::ToggleTree => Ok(Action::Continue),
-            scooter::ScooterAction::Exited => {
-                self.scooter = None;
-                Ok(Action::ScooterExited)
+            serpl::SerplAction::ToggleTree => Ok(Action::Continue),
+            serpl::SerplAction::Exited => {
+                self.serpl = None;
+                Ok(Action::SerplExited)
             }
         }
     }
@@ -857,7 +857,7 @@ impl App {
         if let Some(session) = self.gitui.take() {
             drop(session);
         }
-        if let Some(session) = self.scooter.take() {
+        if let Some(session) = self.serpl.take() {
             drop(session);
         }
     }

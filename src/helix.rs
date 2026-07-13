@@ -10,7 +10,7 @@ use std::path::Path;
 pub enum HelixAction {
     ToggleTree,
     LaunchLazygit,
-    LaunchScooter,
+    LaunchSerpl,
     Exited,
 }
 
@@ -19,7 +19,7 @@ impl From<session::ToolAction> for HelixAction {
         match a {
             session::ToolAction::Toggle => HelixAction::ToggleTree,
             session::ToolAction::LaunchLazygit => HelixAction::LaunchLazygit,
-            session::ToolAction::LaunchScooter => HelixAction::LaunchScooter,
+            session::ToolAction::LaunchSerpl => HelixAction::LaunchSerpl,
             session::ToolAction::Exited => HelixAction::Exited,
         }
     }

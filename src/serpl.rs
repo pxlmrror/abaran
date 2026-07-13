@@ -3,18 +3,18 @@ use anyhow::Result;
 use std::ffi::CString;
 use std::path::Path;
 
-pub enum ScooterAction {
+pub enum SerplAction {
     ToggleTree,
     Exited,
 }
 
-impl From<session::ToolAction> for ScooterAction {
+impl From<session::ToolAction> for SerplAction {
     fn from(a: session::ToolAction) -> Self {
         match a {
             session::ToolAction::Toggle
             | session::ToolAction::LaunchLazygit
-            | session::ToolAction::LaunchScooter => ScooterAction::ToggleTree,
-            session::ToolAction::Exited => ScooterAction::Exited,
+            | session::ToolAction::LaunchSerpl => SerplAction::ToggleTree,
+            session::ToolAction::Exited => SerplAction::Exited,
         }
     }
 }
@@ -25,7 +25,7 @@ pub struct Session {
 
 impl Session {
     pub fn start(dir: &Path) -> Result<Self> {
-        let cmd = CString::new("scooter").unwrap();
+        let cmd = CString::new("serpl").unwrap();
         let args: &[CString] = &[];
         let inner = PtySession::start(
             &cmd,
@@ -38,7 +38,7 @@ impl Session {
         Ok(Session { inner })
     }
 
-    pub fn forward_io(&mut self) -> Result<ScooterAction> {
+    pub fn forward_io(&mut self) -> Result<SerplAction> {
         self.inner.forward_io().map(Into::into)
     }
 

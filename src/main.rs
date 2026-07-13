@@ -2,7 +2,7 @@ mod app;
 mod helix;
 mod gitui;
 mod ops;
-mod scooter;
+mod serpl;
 mod session;
 mod tree;
 mod tui;
@@ -20,7 +20,7 @@ macro_rules! run_tool_from_helix {
             match $app.$run_fn()? {
                 app::Action::Continue
                 | app::Action::GituiExited
-                | app::Action::ScooterExited => break,
+                | app::Action::SerplExited => break,
                 app::Action::Quit => {
                     $app.cleanup();
                     tui::disable_forward()?;
@@ -43,7 +43,7 @@ macro_rules! run_tool_from_tree {
             match $app.$run_fn()? {
                 app::Action::Continue
                 | app::Action::GituiExited
-                | app::Action::ScooterExited => {
+                | app::Action::SerplExited => {
                     $terminal = tui::back_to_tree()?;
                     break;
                 }
@@ -94,8 +94,8 @@ fn main() -> Result<()> {
                         app::Action::SwitchToGitui => {
                             run_tool_from_helix!(app, run_gitui_mode);
                         }
-                        app::Action::SwitchToScooter => {
-                            run_tool_from_helix!(app, run_scooter_mode);
+                        app::Action::SwitchToSerpl => {
+                            run_tool_from_helix!(app, run_serpl_mode);
                         }
                         app::Action::Quit => {
                             app.cleanup();
@@ -109,8 +109,8 @@ fn main() -> Result<()> {
             app::Action::SwitchToGitui => {
                 run_tool_from_tree!(app, terminal, run_gitui_mode);
             }
-            app::Action::SwitchToScooter => {
-                run_tool_from_tree!(app, terminal, run_scooter_mode);
+            app::Action::SwitchToSerpl => {
+                run_tool_from_tree!(app, terminal, run_serpl_mode);
             }
             _ => {}
         }
