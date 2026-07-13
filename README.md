@@ -15,6 +15,8 @@
 terminal tools you need day-to-day — a file tree, git interface, and
 project-wide find-and-replace — all without leaving the terminal.
 
+https://www.youtube.com/watch?v=-1iJ05Y5YRg
+
 The name comes from the Bengali word **আবরণ** — a _shroud_ or _covering_.
 abaran cloaks Helix behind a seamless TUI layer: you browse your project in
 the tree, open files directly into Helix, toggle into gitui for git ops, or
